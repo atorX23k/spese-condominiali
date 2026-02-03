@@ -243,7 +243,7 @@ st.title("Spese Condominiali")
 # Exit flow (intercetta subito al rerun)
 if st.session_state.get("_exit_requested"):
     render_exit_page()
-    shutdown_app(delay_seconds=1.0)
+#    shutdown_app(delay_seconds=1.0)
     st.stop()
 
 tabs = st.tabs(["➕ Nuova spesa", "✅ Pagamenti", "📊 Dashboard", "🏠 Immobili", "⚙️ Impostazioni"])
