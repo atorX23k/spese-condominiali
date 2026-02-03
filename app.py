@@ -118,19 +118,25 @@ def df_query(sql: str, params=()):
 
 def exec_sql(sql: str, params=()):
     with get_conn() as conn:
-        conn.execute(sql, params)
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+        conn.commit()
 
 def exec_many(sql: str, seq_params):
     with get_conn() as conn:
-        conn.executemany(sql, seq_params)
+        with conn.cursor() as cur:
+            cur.executemany(sql, seq_params)
+        conn.commit()
 
 def get_immobili_df():
     return df_query("SELECT id, nome FROM immobili ORDER BY nome")
 
 def get_immobile_id(nome: str) -> int:
     with get_conn() as conn:
-        row = conn.execute("SELECT id FROM immobili WHERE nome=?", (nome,)).fetchone()
-        return int(row[0]) if row else None
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM immobili WHERE nome=%s", (nome,))
+            row = cur.fetchone()
+            return int(row[0]) if row else None
 
 # =========================================================
 # Helpers UI/Logic
@@ -264,7 +270,7 @@ with tabs[3]:
             if not nome_new:
                 st.warning("Inserisci un nome valido.")
             else:
-                exec_sql("INSERT OR IGNORE INTO immobili(nome) VALUES (?)", (nome_new,))
+                exec_sql("INSERT INTO immobili(nome) VALUES (%s) ON CONFLICT (nome) DO NOTHING", (nome_new,))
                 st.success("Immobile aggiunto (o già presente).")
                 st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
@@ -280,7 +286,7 @@ with tabs[3]:
             scelta_nome = st.selectbox("Immobile", imm["nome"].tolist(), key="imm_sel", label_visibility="collapsed")
 
         imm_id = get_immobile_id(scelta_nome)
-        n_spese = int(df_query("SELECT COUNT(*) AS n FROM spese WHERE immobile_id=?", (imm_id,)).iloc[0]["n"])
+        n_spese = int(df_query("SELECT COUNT(*) AS n FROM spese WHERE immobile_id=%s", (imm_id,)).iloc[0]["n"])
 
         if "imm_edit_mode" not in st.session_state:
             st.session_state.imm_edit_mode = False
@@ -310,7 +316,7 @@ with tabs[3]:
                     if not new_name:
                         st.warning("Il nuovo nome non può essere vuoto.")
                     else:
-                        exec_sql("UPDATE immobili SET nome=? WHERE id=?", (new_name, imm_id))
+                        exec_sql("UPDATE immobili SET nome=%s WHERE id=%s", (new_name, imm_id))
                         st.session_state.imm_edit_mode = False
                         st.session_state.imm_edit_id = None
                         st.success("Nome aggiornato.")
@@ -330,7 +336,7 @@ with tabs[3]:
             a, b = st.columns(2)
             with a:
                 if st.button("Sì, elimina definitivamente", key="imm_del_yes"):
-                    exec_sql("DELETE FROM immobili WHERE id=?", (imm_id,))
+                    exec_sql("DELETE FROM immobili WHERE id=%s", (imm_id,))
                     st.session_state.imm_confirm_delete = False
                     st.session_state.imm_delete_id = None
                     st.success("Immobile eliminato.")
@@ -448,7 +454,7 @@ with tabs[0]:
                         exec_many("""
                             INSERT INTO spese
                             (immobile_id, esercizio, scadenza, importo, note, stato, data_pagamento, numero_rata, numero_rate_totali, tipo_spesa)
-                            VALUES (?,?,?,?,?,?,?,?,?,?)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         """, rows)
                         st.success(f"✅ Registrate {len(rows)} rate nel database.")
                         reset_nuova_spesa()
@@ -494,16 +500,16 @@ with tabs[1]:
         """
         params = []
         if filtro_immobile != "Tutti":
-            sql += " AND i.nome=?"
+            sql += " AND i.nome=%s"
             params.append(filtro_immobile)
         if filtro_stato != "Tutti":
-            sql += " AND s.stato=?"
+            sql += " AND s.stato=%s"
             params.append(filtro_stato)
         if filtro_esercizio != "Tutti":
-            sql += " AND s.esercizio=?"
+            sql += " AND s.esercizio=%s"
             params.append(int(filtro_esercizio))
 
-        sql += " ORDER BY date(s.scadenza) ASC, i.nome ASC, s.esercizio ASC, s.numero_rata ASC"
+        sql += " ORDER BY s.scadenza ASC, i.nome ASC, s.esercizio ASC, s.numero_rata ASC"
         df = df_query(sql, tuple(params))
 
         if df.empty:
@@ -544,16 +550,18 @@ with tabs[1]:
                     if st.button("↩️ Da pagare", key="btn_unpay", use_container_width=True):
                         with get_conn() as c:
                             nota_extra = st.session_state.get("pay_note", "")
-                            if (nota_extra or "").strip():
-                                c.execute("""
-                                    UPDATE spese
-                                    SET note = CASE
-                                        WHEN note IS NULL OR trim(note) = '' THEN ?
-                                        ELSE note || ' | ' || ?
-                                    END
-                                    WHERE id = ?
-                                """, (nota_extra.strip(), nota_extra.strip(), spesa_id))
-                            c.execute("UPDATE spese SET stato='Da pagare', data_pagamento=NULL WHERE id=?", (spesa_id,))
+                            with c.cursor() as cur:
+                                if (nota_extra or "").strip():
+                                    cur.execute("""
+                                        UPDATE spese
+                                        SET note = CASE
+                                            WHEN note IS NULL OR trim(note) = '' THEN %s
+                                            ELSE note || ' | ' || %s
+                                        END
+                                        WHERE id = %s
+                                    """, (nota_extra.strip(), nota_extra.strip(), spesa_id))
+                                cur.execute("UPDATE spese SET stato='Da pagare', data_pagamento=NULL WHERE id=%s", (spesa_id,))
+                            c.commit()
                         st.success("Impostata come Da pagare.")
                         st.rerun()
 
@@ -571,7 +579,7 @@ with tabs[1]:
                     c1, c2 = st.columns(2)
                     with c1:
                         if st.button("Sì, elimina", key="confirm_del_yes", use_container_width=True):
-                            exec_sql("DELETE FROM spese WHERE id=?", (spesa_id,))
+                            exec_sql("DELETE FROM spese WHERE id=%s", (spesa_id,))
                             st.session_state.confirm_delete_spesa = False
                             st.session_state.pending_delete_spesa_id = None
                             st.success("Rata eliminata.")
@@ -596,16 +604,18 @@ with tabs[1]:
                     if st.button("💾 Registra", key="pay_registra", use_container_width=True):
                         nota_extra = st.session_state.get("pay_note", "")
                         with get_conn() as c:
-                            if (nota_extra or "").strip():
-                                c.execute("""
-                                    UPDATE spese
-                                    SET note = CASE
-                                        WHEN note IS NULL OR trim(note) = '' THEN ?
-                                        ELSE note || ' | ' || ?
-                                    END
-                                    WHERE id = ?
-                                """, (nota_extra.strip(), nota_extra.strip(), spesa_id))
-                            c.execute("UPDATE spese SET stato='Pagato', data_pagamento=? WHERE id=?", (dp.isoformat(), spesa_id))
+                            with c.cursor() as cur:
+                                if (nota_extra or "").strip():
+                                    cur.execute("""
+                                        UPDATE spese
+                                        SET note = CASE
+                                            WHEN note IS NULL OR trim(note) = '' THEN %s
+                                            ELSE note || ' | ' || %s
+                                        END
+                                        WHERE id = %s
+                                    """, (nota_extra.strip(), nota_extra.strip(), spesa_id))
+                                cur.execute("UPDATE spese SET stato='Pagato', data_pagamento=%s WHERE id=%s", (dp.isoformat(), spesa_id))
+                            c.commit()
                         st.session_state.pay_mark_mode = False
                         st.session_state.pay_mark_id = None
                         st.success("Pagamento registrato.")
