@@ -1,13 +1,15 @@
 import os
 import psycopg2
-from psycopg2.extras import RealDictCursor
 
 
 def get_conn():
     """
     Connessione PostgreSQL (Supabase) tramite variabili d'ambiente.
+
     Richiede:
       DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
+    Opzionali:
+      DB_SSLMODE (default: require)
     """
     return psycopg2.connect(
         host=os.environ["DB_HOST"],
@@ -16,13 +18,12 @@ def get_conn():
         user=os.environ["DB_USER"],
         password=os.environ["DB_PASSWORD"],
         sslmode=os.environ.get("DB_SSLMODE", "require"),
-        cursor_factory=RealDictCursor,
     )
 
 
 def init_db():
     """
-    Su Supabase lo schema è già creato e i dati sono già migrati.
-    Quindi non creiamo tabelle qui.
+    Su Supabase lo schema è già creato e i dati sono già migrati,
+    quindi qui non facciamo CREATE TABLE.
     """
     return
