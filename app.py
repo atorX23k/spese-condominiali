@@ -129,7 +129,7 @@ def exec_many(sql: str, seq_params):
         conn.commit()
 
 def get_immobili_df():
-    return df_query("SELECT id, nome FROM immobili ORDER BY nome")
+    return df_query("SELECT id, nome, indirizzo, codice_fiscale, iban FROM immobili ORDER BY nome")
 
 def get_immobile_id(nome: str) -> int:
     with get_conn() as conn:
@@ -243,7 +243,7 @@ st.title("Spese Condominiali")
 # Exit flow (intercetta subito al rerun)
 if st.session_state.get("_exit_requested"):
     render_exit_page()
-#    shutdown_app(delay_seconds=1.0)
+    shutdown_app(delay_seconds=1.0)
     st.stop()
 
 tabs = st.tabs(["➕ Nuova spesa", "✅ Pagamenti", "📊 Dashboard", "🏠 Immobili", "⚙️ Impostazioni"])
@@ -257,7 +257,16 @@ with tabs[3]:
     if imm.empty:
         st.info("Nessun immobile presente.")
     else:
-        st.dataframe(imm[["nome"]].rename(columns={"nome": "Immobile"}), use_container_width=True, hide_index=True)
+        st.dataframe(
+            imm[["nome","indirizzo","codice_fiscale","iban"]].rename(columns={
+                "nome": "Immobile",
+                "indirizzo": "Indirizzo",
+                "codice_fiscale": "Codice fiscale",
+                "iban": "IBAN"
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown('<div class="card"><div class="card-title">➕ Aggiungi immobile</div>', unsafe_allow_html=True)
@@ -307,26 +316,49 @@ with tabs[3]:
             st.caption(f"Elimina disattivato: esistono {n_spese} spese/pagamenti associati.")
 
         if st.session_state.imm_edit_mode and st.session_state.imm_edit_id == imm_id:
-            r1, r2, r3 = st.columns([3, 1, 1])
-            with r1:
-                new_name = st.text_input("Nuovo nome", value=scelta_nome, key="imm_new_name", label_visibility="collapsed")
-            with r2:
-                if st.button("Salva", key="imm_save_rename", use_container_width=True):
+            # Valori correnti
+            row = imm[imm["id"] == imm_id].iloc[0]
+            cur_nome = row["nome"]
+            cur_indirizzo = row.get("indirizzo", "")
+            cur_cf = row.get("codice_fiscale", "")
+            cur_iban = row.get("iban", "")
+
+            st.markdown("**Modifica immobile**")
+            f1, f2 = st.columns(2)
+            with f1:
+                new_name = st.text_input("Nome", value=cur_nome or "", key="imm_edit_nome")
+                new_indirizzo = st.text_input("Indirizzo", value=cur_indirizzo or "", key="imm_edit_indirizzo")
+            with f2:
+                new_cf = st.text_input("Codice fiscale", value=cur_cf or "", key="imm_edit_cf")
+                new_iban = st.text_input("IBAN", value=cur_iban or "", key="imm_edit_iban")
+
+            a, b = st.columns([1, 1])
+            with a:
+                if st.button("Salva", key="imm_save_edit", use_container_width=True):
                     new_name = (new_name or "").strip()
+                    new_indirizzo = (new_indirizzo or "").strip() or None
+                    new_cf = (new_cf or "").strip() or None
+                    new_iban = (new_iban or "").strip() or None
+
                     if not new_name:
-                        st.warning("Il nuovo nome non può essere vuoto.")
+                        st.warning("Il nome non può essere vuoto.")
                     else:
-                        exec_sql("UPDATE immobili SET nome=%s WHERE id=%s", (new_name, imm_id))
-                        st.session_state.imm_edit_mode = False
-                        st.session_state.imm_edit_id = None
-                        st.success("Nome aggiornato.")
-                        st.rerun()
-            with r3:
+                        try:
+                            exec_sql(
+                                "UPDATE immobili SET nome=%s, indirizzo=%s, codice_fiscale=%s, iban=%s WHERE id=%s",
+                                (new_name, new_indirizzo, new_cf, new_iban, imm_id),
+                            )
+                            st.session_state.imm_edit_mode = False
+                            st.session_state.imm_edit_id = None
+                            st.success("Immobile aggiornato.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Errore aggiornamento immobile: {e}")
+            with b:
                 if st.button("Annulla", key="imm_cancel_edit", use_container_width=True):
                     st.session_state.imm_edit_mode = False
                     st.session_state.imm_edit_id = None
                     st.rerun()
-
         if "imm_confirm_delete" not in st.session_state:
             st.session_state.imm_confirm_delete = False
             st.session_state.imm_delete_id = None
